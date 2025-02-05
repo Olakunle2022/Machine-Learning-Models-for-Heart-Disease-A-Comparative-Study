@@ -1,0 +1,469 @@
+---
+title: "Heart Disease Prediction: Model Comparison and Analysis"
+author: "James Obanla"
+date: "2024-12-31"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 1. Introduction: 
+
+One of the reasons for the human population's loss of life is heart disease. This project is focused on comparing models built using exogenous variables such as age, sex, number of major vessels, serum cholesterol, resting blood pressure, chest pain, etc. to predict the target—the presence or absence of heart disease as the dependent variable. The sample size of datasets available for this task is 303 observations and 14 variables containing qualitative and quantitative data. The results derived from the support vector machine and logistic regression models are thoroughly analyzed and compared, leading to data-driven recommendations based on their respective performances
+ 
+### 2. Loading Necessary Packages
+
+Packages for data manipulation, visualization, and machine learning are loaded.
+
+```{r , warning=FALSE, message=FALSE, echo=TRUE}
+library(tidyverse)
+library(reshape2)
+library(ggplot2)
+library(caTools)
+library(e1071)
+library(randomForest)
+```
+
+
+```{r , warning=FALSE, message=FALSE, echo=TRUE}
+library(gt)
+
+```
+
+
+### 3. Loading and Inspecting Data
+
+The heart dataset is loaded, and its structure and initial rows are reviewed.
+
+```{r , warning=FALSE }
+
+data<-read.csv(file.choose(), header = TRUE)
+
+attach(data)
+
+head(data)
+```
+
+
+### 4. Data Cleaning
+
+Handle duplicates, missing values, and encode categorical variables for analysis.
+
+```{r , warning=FALSE}
+
+data %>% filter(duplicated(.))
+
+any(is.na(data))
+
+data <- data %>% drop_na()  ## removing of missing data
+
+data_n <- data %>%
+  mutate(
+    ChestPain = ifelse(ChestPain == "typical", 1, 
+                       ifelse(ChestPain == "asymptomatic", 2, 
+                              ifelse(ChestPain == "nonanginal", 3, 
+                                     ifelse(ChestPain == "nontypical", 4, NA)))),
+    Thal = ifelse(Thal == "normal", 1, 
+                  ifelse(Thal == "fixed", 2, 
+                         ifelse(Thal == "reversable", 3, NA))),
+    Thal = ifelse(is.na(Thal), mean(Thal, na.rm = TRUE), Thal)
+  )
+
+tail(data_n) 
+
+summary(data_n)
+
+```
+
+
+### 5. Exploratory Data Analysis
+
+Boxplots are created to explore variable distributions by the target class.
+
+```{r , warning=FALSE}
+
+# Ensure Target is a factor with the correct levels
+data_n$Target <- factor(ifelse(data_n$Target == 0, "no", "yes"), levels = c("no", "yes"))
+
+# Create the boxplot
+data1 <- ggplot(data_n, aes(x = Target, y = Age, fill = Target)) +
+  geom_boxplot(alpha = 0.8, color = "black") +
+  theme_minimal() +
+  labs(title = "Boxplot of Age by Target",
+       x = "Target",
+       y = "Age") +
+  scale_fill_manual(values = c("no" = "orange", "yes" = "brown"))
+
+# Display the plot
+data1
+
+# Create the boxplot for RestBP by Target
+data2 <- ggplot(data_n, aes(x = Target, y = RestBP, fill = Target)) +
+  geom_boxplot(alpha = 0.8, color = "black") +
+  theme_minimal() +
+  labs(title = "Boxplot of RestBP by Target",
+       x = "Target",
+       y = "Resting Blood Pressure (RestBP)") +
+  scale_fill_manual(values = c("no" = "blue", "yes" = "red"))
+
+# Display the plot
+data2
+
+# Create the boxplot for Chol by Target
+data3 <- ggplot(data_n, aes(x = Target, y = Chol, fill = Target)) +
+  geom_boxplot(alpha = 0.8, color = "black") +
+  theme_minimal() +
+  labs(title = "Boxplot of Chol by Target",
+       x = "Target",
+       y = "Cholesterol (Chol)") +
+  scale_fill_manual(values = c("no" = "purple", "yes" = "yellow"))
+
+# Display the plot
+data3
+
+data4 <- ggplot(data_n, aes(x = Target, y = MaxHR, fill = Target)) +
+  geom_boxplot(alpha = 0.8, color = "black") +
+  theme_minimal() +
+  labs(title = "Boxplot of MaxHR by Target",
+       x = "Target",
+       y = "Maximum Heart Rate Achieved (MaxHR)") +
+  scale_fill_manual(values = c("no" = "green", "yes" = "gold"))
+
+data4
+
+data5 <- ggplot(data_n, aes(x = Target, y = Oldpeak, fill = Target)) +
+  geom_boxplot(alpha = 0.8, color = "black") +
+  theme_minimal() +
+  labs(title = "Boxplot of Oldpeak by Target",
+       x = "Target",
+       y = "ST Depression Induced by Exercise Relative to Rest(Oldpeak)") +
+  scale_fill_manual(values = c("no" = "orchid", "yes" = "turquoise"))
+
+data5
+
+```
+
+
+### 6. Correlation Heatmap
+
+A correlation matrix heatmap is created for independent variables, separated by dependent variable-Target.
+
+```{r , warning=FALSE}
+# Select numeric variables for correlation
+data6 <- data_n[, c("Age", "Sex", "ChestPain", "RestBP", "Chol", "Fbs", 
+                    "RestECG", "ExAng", "Slope", "Ca", "Thal", "MaxHR", "Oldpeak")]
+
+# Ensure Target is treated as a categorical variable
+data_n$Target <- factor(data_n$Target)
+
+# Compute correlation matrices separately for each Target category
+cor_by_target <- lapply(split(data6, data_n$Target), function(subset) {
+  cor(subset, use = "complete.obs")
+})
+
+# Convert the correlation matrices into long format and add Target labels
+cor_melted_list <- lapply(names(cor_by_target), function(target) {
+  melted <- reshape2::melt(cor_by_target[[target]])
+  melted$Target <- target
+  return(melted)
+})
+
+# Combine all melted data into a single data frame
+data7 <- do.call(rbind, cor_melted_list)
+
+# Plot the heatmap with correlation values
+ggplot(data7, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2)), size = 4, color = "black") +  # Add correlation values
+  scale_fill_gradient(low = "white", high = "blue") +
+  facet_wrap(~ Target) +  # Separate heatmaps for each Target category
+  labs(title = "Correlation Heatmap by Target",
+       x = "Variable 1", y = "Variable 2") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+### 7. Logistic Regression Model
+
+A Logistic Regression model is trained and evaluated.
+
+```{r , warning=FALSE}
+
+# Set a random see so your "random" results are the same as this notebook
+set.seed(101) 
+
+# Split up the sample, basically randomly assigns a booleans to a new column "sample"
+sample <- sample.split(data_n$Target, SplitRatio = 0.80) # SplitRatio = percent of sample==TRUE
+
+# Training Data
+train <-subset(data_n, sample == TRUE)
+
+# Testing Data
+test <- subset(data_n, sample == FALSE)
+
+
+#Fitting Generalized Linear Models
+
+model_lg = glm(Target ~ ., family = binomial(logit), data = train)
+
+summary(model_lg)
+
+# Choose a model by AIC in a Stepwise Algorithm
+
+new.step.model <- step(model_lg)
+
+summary(new.step.model)
+
+
+```
+
+Creating a confusion matrix using the predict function with type='response' as an argument inside of that function.
+
+```{r, warning=FALSE}
+
+test$predicted.Target = predict(model_lg, newdata=test, type="response")
+
+# Confusion matrix
+table(test$Target, test$predicted.Target > 0.5)
+
+
+```
+
+Confusion matrix values
+
+```{r , warning=FALSE}
+
+TP <- 18  # True Positives
+FP <- 4   # False Positives
+TN <- 29  # True Negatives
+FN <- 10  # False Negatives
+
+# Calculate metrics
+
+accuracy <- (TP + TN) / (TP + FP + TN + FN)
+
+precision <- TP / (TP + FP)
+
+recall <- TP / (TP + FN)
+
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+specificity <- TN / (TN + FP)
+
+# Print results
+cat("Accuracy:", round(accuracy, 4), "\n")
+
+cat("Precision:", round(precision, 4), "\n")
+
+cat("Recall (Sensitivity):", round(recall, 4), "\n")
+
+cat("F1 Score:", round(f1_score, 4), "\n")
+
+cat("Specificity:", round(specificity, 4), "\n")
+
+```
+
+### Interpretation:
+ 
+- Accuracy (78.57%): Indicates that ~79% of predictions were correct.
+
+- Precision (81.82%): Suggests the model effectively avoids False Positives.
+
+- Recall (64.29%): Shows the model misses some True Positives (False Negatives present).
+
+- F1 Score (72.00%): Balances precision and recall, indicating moderate performance.
+
+- Specificity (87.88%): High specificity suggests the model is good at correctly  
+
+identifying negatives ("No").
+
+
+### 8. Support Vector Machine Model
+
+A Support Vector Machine (SVM) model is trained and evaluated.
+
+```{r , warning=FALSE}
+
+library(e1071)
+
+model_svm <- svm(Target ~ .,data=train)
+
+summary(model_svm)
+
+predicted.values <- predict(model_svm,test[1:13])
+
+```
+
+
+```{r , warning=FALSE}
+# Confusion Matrix 
+
+table(predicted.values,test$Target)
+
+```
+
+
+```{r , warning=FALSE}
+
+### Confusion matrix vlues
+
+TP <- 20  # True Positives
+
+FP <- 8   # False Positives
+
+TN <- 31  # True Negatives
+
+FN <- 2   # False Negatives
+
+
+### Calculate metrics
+
+accuracy <- (TP + TN) / (TP + FP + TN + FN)
+
+precision <- TP / (TP + FP)
+
+recall <- TP / (TP + FN)
+
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+# Print results
+
+cat("Accuracy:", round(accuracy, 4), "\n")
+
+cat("Precision:", round(precision, 4), "\n")
+
+cat("Recall:", round(recall, 4), "\n")
+
+cat("F1 Score:", round(f1_score, 4), "\n")
+```
+
+#### Interpretation:
+
+- High Recall (0.91): The model is effective at identifying the positive class ("Yes").
+
+- Moderate Precision (0.71): There are some False Positives, reducing precision.
+
+- F1 Score (0.80): Balances precision and recall, indicating overall good performance.
+
+- Accuracy (0.85): 85% of all predictions are correct.
+
+
+### 9. Random Forest Model
+
+A Random Forest model is trained and evaluated
+ 
+```{r}
+#Fitting Random Forest Using randomForest package
+library(randomForest)
+data_n$Target <- factor(data$Target)
+library(caTools)
+set.seed(101)
+split = sample.split(data_n$Target, SplitRatio = 0.70)
+train = subset(data_n, split == TRUE)
+test = subset(data_n, split == FALSE)
+model <- randomForest(Target ~ Age + Sex + ChestPain + RestBP + Chol + Fbs  + RestECG + MaxHR + ExAng + Oldpeak + Slope + Ca + Thal,data=train)
+rf.pred <- predict(model,test)
+table(rf.pred,test$Target)
+
+```
+
+```{r}
+# Define confusion matrix values
+TP <- 33  # True Positives
+TN <- 40  # True Negatives
+FP <- 9   # False Positives
+FN <- 9   # False Negatives
+
+# Accuracy
+accuracy <- (TP + TN) / (TP + TN + FP + FN)
+print(paste("Accuracy:", round(accuracy, 4)))
+
+# Precision for class 1
+precision_1 <- TP / (TP + FP)
+print(paste("Precision (class 1):", round(precision_1, 4)))
+
+# Recall for class 1
+recall_1 <- TP / (TP + FN)
+print(paste("Recall (class 1):", round(recall_1, 4)))
+
+# F1-score for class 1
+f1_score_1 <- 2 * (precision_1 * recall_1) / (precision_1 + recall_1)
+print(paste("F1-Score (class 1):", round(f1_score_1, 4)))
+
+# Precision for class 0
+precision_0 <- TN / (TN + FN)
+print(paste("Precision (class 0):", round(precision_0, 4)))
+
+# Recall for class 0
+recall_0 <- TN / (TN + FP)
+print(paste("Recall (class 0):", round(recall_0, 4)))
+
+# F1-score for class 0
+f1_score_0 <- 2 * (precision_0 * recall_0) / (precision_0 + recall_0)
+print(paste("F1-Score (class 0):", round(f1_score_0, 4)))
+
+```
+
+#### Interpretation:
+
+- Accuracy (80.22%) - The model correctly classified 80.22% of all cases, showing reliable overall performance in distinguishing between positive and negative classes.
+
+- Precision for Class 1 (78.57%) - When predicting the positive class, the model is correct 78.57% of the time, minimizing false positives effectively.
+
+- Recall for Class 1 (78.57%) - The model identifies 78.57% of actual positive cases, indicating a moderate ability to avoid missing true positives.
+
+- F1-Score for Class 1 (78.57%) - A balanced measure of precision and recall, showing the model is reliable in predicting the positive class.
+
+- Precision for Class 0 (81.63%) - When predicting the negative class, the model is correct 81.63% of the time, effectively avoiding false negatives.
+
+- Recall for Class 0 (81.63%) - The model correctly identifies 81.63% of actual negative cases, indicating robustness in detecting the negative class.
+
+- F1-Score for Class 0 (81.63%) - A balanced measure of precision and recall for the negative class, demonstrating consistent reliability
+
+
+### 10. Model Comparison
+
+A confusion matrix and metrics are presented for all models.
+
+```{r}
+# Create the table as a data frame
+model_performance <- data.frame(
+  Model = c("Logistic Regression", "Support Vector Machine", "Random Forest"),
+  Accuracy = c("77.05%", "83.61%", "80.22%"),
+  Precision = c("81.82%", "71.43%", "78.57%"),
+  Recall = c("64.29%", "90.91%", "78.57%"),
+  F1_Score = c("72.00%", "80.00%", "78.57%"),
+  Specificity = c("87.88%", "N/A", "81.63%")
+)
+
+# Generate the table
+model_performance %>%
+  gt() %>%
+  tab_header(title = "Model Performance Comparison") %>%
+  cols_label(
+    Model = "Model",
+    Accuracy = "Accuracy",
+    Precision = "Precision",
+    Recall = "Recall",
+    F1_Score = "F1 Score",
+    Specificity = "Specificity"
+  ) %>%
+  fmt_percent(columns = starts_with("Accuracy"), decimals = 2)
+
+```
+
+### 11. Conclusion
+
+SVM achieved the highest accuracy and recall, making it effective for identifying positive cases.
+Logistic Regression excelled in precision and specificity but struggled with recall.
+Random Forest provided balanced metrics across all measures, making it a reliable choice.
+For high recall requirements, SVM is the best model.
+Random Forest is recommended for balanced performance in diverse applications.
+
+
+
+### 12. Insights:
+
+This project demonstrates the effectiveness of predictive modeling for heart disease using Logistic Regression, Support Vector Machine (SVM), and Random Forest. Among the models, SVM achieved the highest recall (90.91%), making it ideal for scenarios prioritizing the identification of true positives, such as early disease detection. However, Random Forest provided balanced performance across metrics, suggesting it is better suited for applications requiring a balance between sensitivity and specificity.
